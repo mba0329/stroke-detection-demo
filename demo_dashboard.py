@@ -4,7 +4,6 @@ Run with: streamlit run demo_dashboard.py
 """
 
 import streamlit as st
-import cv2
 import numpy as np
 import time
 from datetime import datetime
@@ -14,15 +13,18 @@ import plotly.express as px
 import tempfile
 from pathlib import Path
 
-# Try to import MediaPipe (optional for demo)
+# Try to import cv2, but don't fail if unavailable
 try:
-    import mediapipe as mp
-    MEDIAPIPE_AVAILABLE = True
+    import cv2
+    CV2_AVAILABLE = True
 except ImportError:
-    MEDIAPIPE_AVAILABLE = False
-    st.warning("⚠️ MediaPipe not installed. Using simulated face analysis.")
+    CV2_AVAILABLE = False
+    st.warning("⚠️ OpenCV not available. Using simulated analysis only.")
 
-# Page configuration
+# Disable MediaPipe for cloud deployment
+MEDIAPIPE_AVAILABLE = False
+
+# Page configuration (must be first Streamlit command)
 st.set_page_config(
     page_title="FAST Stroke Detection System",
     page_icon="🏥",
@@ -82,76 +84,14 @@ st.markdown("""
 
 
 class FaceAnalyzerDemo:
-    """Demo face analyzer - works with or without MediaPipe"""
+    """Demo face analyzer - simulated for cloud deployment"""
     
     def __init__(self):
         self.face_mesh = None
-        # Try to initialize MediaPipe, but don't fail if it doesn't work
-        if MEDIAPIPE_AVAILABLE:
-            try:
-                import mediapipe.python.solutions as mpsolutions
-                self.mp_face = mpsolutions.face_mesh
-                self.face_mesh = self.mp_face.FaceMesh(
-                    static_image_mode=False,
-                    max_num_faces=1,
-                    refine_landmarks=True,
-                    min_detection_confidence=0.5,
-                    min_tracking_confidence=0.5
-                )
-            except Exception as e:
-                print(f"MediaPipe initialization failed: {e}")
-                self.face_mesh = None
     
     def analyze_video(self, video_path: str, progress_callback=None) -> dict:
-        """Analyze video - uses real MediaPipe if available, otherwise simulates"""
-        
-        if self.face_mesh is not None and video_path:
-            return self._real_analysis(video_path, progress_callback)
-        else:
-            return self._simulated_analysis(progress_callback)
-    
-    def _real_analysis(self, video_path: str, progress_callback) -> dict:
-        """Real MediaPipe analysis"""
-        cap = cv2.VideoCapture(video_path)
-        
-        asymmetry_scores = []
-        frame_count = 0
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        
-        while cap.isOpened() and frame_count < 100:  # Limit to 100 frames for demo
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            frame_count += 1
-            if progress_callback and total_frames > 0:
-                progress_callback(min(1.0, frame_count / min(total_frames, 100)))
-            
-            if frame_count % 5 != 0:
-                continue
-            
-            # Simple simulation for demo
-            asymmetry = np.random.uniform(0.1, 0.5)
-            asymmetry_scores.append(asymmetry)
-        
-        cap.release()
-        
-        if asymmetry_scores:
-            max_asymmetry = float(np.max(asymmetry_scores))
-            mean_asymmetry = float(np.mean(asymmetry_scores))
-        else:
-            max_asymmetry = 0.3
-            mean_asymmetry = 0.25
-        
-        return {
-            'mean_asymmetry': mean_asymmetry,
-            'max_asymmetry': max_asymmetry,
-            'mean_smile_intensity': 0.08,
-            'abnormal': max_asymmetry > 0.35,
-            'confidence': 0.87,
-            'frames_analyzed': len(asymmetry_scores) if asymmetry_scores else 20,
-            'asymmetry_timeline': asymmetry_scores if asymmetry_scores else list(np.random.uniform(0.15, 0.45, 20))
-        }
+        """Simulated analysis for demo"""
+        return self._simulated_analysis(progress_callback)
     
     def _simulated_analysis(self, progress_callback) -> dict:
         """Simulated analysis for demo"""
@@ -207,7 +147,7 @@ class StrokeDashboardDemo:
                    unsafe_allow_html=True)
         
         st.info("""
-        💡 **Demo Mode:** This is a demonstration version. Upload a video or use simulated data to see the full workflow.
+        💡 **Demo Mode:** This is a demonstration version showcasing the XAI interface and workflow.
         """)
         
         st.error("""
@@ -253,71 +193,37 @@ class StrokeDashboardDemo:
         st.markdown("---")
     
     def render_face_assessment(self):
-        """Face assessment with demo data option"""
+        """Face assessment with demo data"""
         st.header("😊 Step 1: Face Drooping Detection")
         
         st.markdown("""
         ### Instructions:
-        1. **Upload a video** of the patient's face OR use demo data
-        2. Ask the patient to **smile and show their teeth**
-        3. The AI will analyze facial symmetry
+        1. Click button below to generate simulated facial analysis
+        2. In production, this would analyze a video of the patient smiling
+        3. The AI detects facial asymmetry automatically
         """)
         
         col1, col2 = st.columns([3, 2])
         
         with col1:
-            # Option to use demo data
-            use_demo = st.checkbox("🎭 Use simulated demo data (no video needed)", value=False)
+            st.info("🎭 **Demo Mode:** Click below to generate simulated facial analysis data")
             
-            if not use_demo:
-                uploaded_video = st.file_uploader(
-                    "📹 Upload face video (MP4, AVI, MOV)",
-                    type=['mp4', 'avi', 'mov'],
-                    key="face_video"
-                )
+            if st.button("🎲 Generate Demo Facial Analysis", type="primary", use_container_width=True):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
                 
-                if uploaded_video is not None:
-                    st.video(uploaded_video)
-                    
-                    if st.button("🔍 Analyze Facial Symmetry", type="primary", use_container_width=True):
-                        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
-                            tmp_file.write(uploaded_video.read())
-                            video_path = tmp_file.name
-                        
-                        progress_bar = st.progress(0)
-                        status_text = st.empty()
-                        
-                        def update_progress(progress):
-                            progress_bar.progress(progress)
-                            status_text.text(f"Analyzing video... {int(progress * 100)}%")
-                        
-                        result = self.face_analyzer.analyze_video(video_path, update_progress)
-                        
-                        progress_bar.empty()
-                        status_text.empty()
-                        
-                        st.session_state.face_result = result
-                        st.success("✅ Analysis complete!")
-                        st.rerun()
-            else:
-                st.info("👇 Click below to generate simulated facial analysis data")
+                def update_progress(progress):
+                    progress_bar.progress(progress)
+                    status_text.text(f"Analyzing... {int(progress * 100)}%")
                 
-                if st.button("🎲 Generate Demo Data", type="primary", use_container_width=True):
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    def update_progress(progress):
-                        progress_bar.progress(progress)
-                        status_text.text(f"Simulating analysis... {int(progress * 100)}%")
-                    
-                    result = self.face_analyzer.analyze_video(None, update_progress)
-                    
-                    progress_bar.empty()
-                    status_text.empty()
-                    
-                    st.session_state.face_result = result
-                    st.success("✅ Demo data generated!")
-                    st.rerun()
+                result = self.face_analyzer.analyze_video(None, update_progress)
+                
+                progress_bar.empty()
+                status_text.empty()
+                
+                st.session_state.face_result = result
+                st.success("✅ Analysis complete!")
+                st.rerun()
         
         with col2:
             st.markdown("### 📊 Analysis Results")
@@ -362,7 +268,7 @@ class StrokeDashboardDemo:
                     st.session_state.current_step = 2
                     st.rerun()
             else:
-                st.info("👆 Upload video or use demo data")
+                st.info("👆 Generate demo data above")
     
     def render_arms_assessment(self):
         """Arms assessment"""
